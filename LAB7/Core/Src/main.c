@@ -42,13 +42,29 @@
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 uint64_t _micros = 0;
 float EncoderVel = 0;
+
+//PID
+int16_t setpoint = 0 ;
+int16_t setpoint_PID = 0 ;
+//RPM
+float RPM = 0 ;
+
+//PWM
+uint16_t PWMOut = 0 ;
+uint16_t PWMOut1 = 0 ;
+uint16_t PWMOut2 = 0 ;
+
+	// Time
 uint64_t Timestamp_Encoder = 0;
+uint64_t TimeOutputPWM = 0 ;
+uint16_t PID_vel = 0 ;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,9 +73,14 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 uint64_t micros();
 float EncoderVelocity_Update();
+void read_RPM() ;
+void PWM_clockwise();
+void PWM_counterclockwise();
+void PID();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -98,9 +119,16 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM1_Init();
   MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-	HAL_TIM_Base_Start_IT(&htim2);
+	HAL_TIM_Base_Start_IT(&htim2); // micros
 	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+
+	//Start PWM
+	HAL_TIM_Base_Start(&htim3) ;
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) ;
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2) ;
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,21 +139,54 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-		//RAW Read
-		if (micros() - Timestamp_Encoder >= 10000)
-		{
-			Timestamp_Encoder = micros();
-			EncoderVel = EncoderVelocity_Update();
-		}
+	  if (micros() - TimeOutputPWM >= 1000)//uS
+	  {
+		  TimeOutputPWM =  micros() ;
+		  if(setpoint > 0)
+		  {
+			  PWM_clockwise();
+		  }
+		  else if (setpoint < 0 )
+		  {
+			  PWM_counterclockwise();
+		  }
+		  else if (setpoint == 0 )
+		  {
+			  PWMOut1 = 0 ;
+			  PWMOut2 = 0 ;
+			  //PID();
+			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
+			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
+		  }
+	  }
 
 
-
-		//Add LPF?
-//		if (micros() - Timestamp_Encoder >= 1000)
+//	  if (micros() - TimeOutputPWM >= 1000)//uS
+//		{
+//		  TimeOutputPWM =  micros() ;
+//
+//		  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
+//		  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
+//		}
+//
+//		//RAW Read
+//		if (micros() - Timestamp_Encoder >= 10000)
 //		{
 //			Timestamp_Encoder = micros();
-//			EncoderVel = (EncoderVel * 999 + EncoderVelocity_Update()) / 1000.0;
+//			EncoderVel = EncoderVelocity_Update();
+//			read_RPM();
 //		}
+
+
+
+	  	 //Add LPF?
+		if (micros() - Timestamp_Encoder >= 100)
+		{
+			Timestamp_Encoder = micros();
+			EncoderVel = (EncoderVel * 999 + EncoderVelocity_Update()) / 1000.0;
+			read_RPM();
+		}
+
 
   }
   /* USER CODE END 3 */
@@ -271,6 +332,69 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 10000;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -390,6 +514,48 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 uint64_t micros()
 {
 	return _micros + htim2.Instance->CNT;
+}
+void read_RPM()
+{
+	RPM = ( EncoderVel*60)/ 3072 ;
+	//RPM = (60*3072)/EncoderVel ;
+}
+void PWM_clockwise()
+{
+	PWMOut2 = 0 ;
+	PID();
+	PWMOut =PWMOut + PID_vel  ;
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut);
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
+}
+void PWM_counterclockwise()
+{
+	PWMOut1 = 0 ;
+	PID();
+	PWMOut = 	PWMOut +PID_vel  ;
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
+	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut);
+}
+void PID()
+{
+	if(setpoint < 0)
+	{
+		setpoint_PID = setpoint*(-1)  ;
+	}
+	else if (setpoint > 0) {
+		setpoint_PID = setpoint ;
+	}
+	uint64_t dt = 1000;
+	double Kp = 0.5 , Ki = 0.5 , Kd = 0.5 ;
+	double  previous_error = 0 , integral = 0 , error =0 ,  derivative = 0 ;
+	previous_error = setpoint_PID - RPM  ;
+	integral = 0 ;
+	error = setpoint_PID - RPM ;
+	integral = integral + (error*dt) ;
+	derivative = (error - previous_error)/dt ;
+	PID_vel =   (Kp*error)+ (Ki*integral) + (Kd*derivative)  ;
+	previous_error = error ;
+	//dt = 0 ;
 }
 /* USER CODE END 4 */
 
