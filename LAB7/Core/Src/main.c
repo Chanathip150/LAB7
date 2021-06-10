@@ -49,15 +49,18 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint64_t _micros = 0;
 float EncoderVel = 0;
-
+float 	sumpid = 0 ;
 //PID
 int16_t setpoint = 0 ;
 int16_t setpoint_PID = 0 ;
+int8_t  errorpid[2] = {0} ;
+float velocity = 0 ;
 //RPM
 float RPM = 0 ;
+double Kp = 0.5 , Ki = 1 , Kd = 1.5 ;
 
 //PWM
-uint16_t PWMOut = 0 ;
+int64_t PWMOut = 0 ;
 uint16_t PWMOut1 = 0 ;
 uint16_t PWMOut2 = 0 ;
 
@@ -81,6 +84,7 @@ void read_RPM() ;
 void PWM_clockwise();
 void PWM_counterclockwise();
 void PID();
+void PID_2();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -101,7 +105,7 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+ HAL_Init();
 
   /* USER CODE BEGIN Init */
 
@@ -142,33 +146,29 @@ int main(void)
 	  if (micros() - TimeOutputPWM >= 1000)//uS
 	  {
 		  TimeOutputPWM =  micros() ;
-		  if(setpoint > 0)
+
+		  //PID();
+		  PID_2();
+		  if(PWMOut > 0)
 		  {
 			  PWM_clockwise();
 		  }
-		  else if (setpoint < 0 )
+		  else if (PWMOut < 0 )
 		  {
 			  PWM_counterclockwise();
 		  }
-		  else if (setpoint == 0 )
-		  {
-			  PWMOut1 = 0 ;
-			  PWMOut2 = 0 ;
-			  //PID();
-			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
-			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
-		  }
+//		  else if (PWMOut==0 )
+//		  {
+//			  PWMOut1 = 0 ;
+//			  PWMOut2 = 0 ;
+//			  PWMOut=0;
+//			  //PID();
+//			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut);
+//			  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
+//		  }
 	  }
 
 
-//	  if (micros() - TimeOutputPWM >= 1000)//uS
-//		{
-//		  TimeOutputPWM =  micros() ;
-//
-//		  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
-//		  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
-//		}
-//
 //		//RAW Read
 //		if (micros() - Timestamp_Encoder >= 10000)
 //		{
@@ -184,7 +184,7 @@ int main(void)
 		{
 			Timestamp_Encoder = micros();
 			EncoderVel = (EncoderVel * 999 + EncoderVelocity_Update()) / 1000.0;
-			read_RPM();
+			//read_RPM();
 		}
 
 
@@ -517,27 +517,30 @@ uint64_t micros()
 }
 void read_RPM()
 {
-	RPM = ( EncoderVel*60)/ 3072 ;
+	double pi = 3.14159265359 ;
+	RPM = EncoderVel/ 3072*(2*pi) ;
 	//RPM = (60*3072)/EncoderVel ;
 }
 void PWM_clockwise()
 {
 	PWMOut2 = 0 ;
-	PID();
-	PWMOut =PWMOut + PID_vel  ;
+	//PID();
+	//PWMOut =PWMOut + PID_vel  ;
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut);
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut2);
 }
 void PWM_counterclockwise()
 {
 	PWMOut1 = 0 ;
-	PID();
-	PWMOut = 	PWMOut +PID_vel  ;
+	//PID();
+	 PWMOut = PWMOut *(-1);
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMOut1);
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMOut);
 }
 void PID()
 {
+	double pi = 3.14159265359 ;
+	velocity = EncoderVel/ 3072*(2*pi) ;
 	if(setpoint < 0)
 	{
 		setpoint_PID = setpoint*(-1)  ;
@@ -546,7 +549,7 @@ void PID()
 		setpoint_PID = setpoint ;
 	}
 	uint64_t dt = 1000;
-	double Kp = 0.5 , Ki = 0.5 , Kd = 0.5 ;
+	//double Kp = 0.5 , Ki = 1 , Kd = 1.5 ;
 	double  previous_error = 0 , integral = 0 , error =0 ,  derivative = 0 ;
 	previous_error = setpoint_PID - RPM  ;
 	integral = 0 ;
@@ -556,6 +559,22 @@ void PID()
 	PID_vel =   (Kp*error)+ (Ki*integral) + (Kd*derivative)  ;
 	previous_error = error ;
 	//dt = 0 ;
+}
+void PID_2()
+{
+	//double pi = 3.14159265359 ;
+	//velocity = EncoderVel/ 3072*(2*pi) ;
+	velocity = (EncoderVel*60)/ 3072;
+//	if(setpoint<0){
+//		errorpid[0] = velocity - setpoint ;
+//	}
+//	if(setpoint>=0){
+//		errorpid[0] =  setpoint - velocity  ;
+//	}
+	errorpid[0] =  setpoint - velocity  ;
+	sumpid =sumpid + errorpid[0] ;
+	PWMOut  = Kp*errorpid[0] + Ki * sumpid + Kd * (errorpid[0] - errorpid[1]) ;
+	errorpid[1] = errorpid[0] ;
 }
 /* USER CODE END 4 */
 
